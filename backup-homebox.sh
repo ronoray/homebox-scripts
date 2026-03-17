@@ -177,17 +177,21 @@ else
 
     # Push latest scripts to GitHub (ronoray/homebox-scripts) for curl bootstrap
     if command -v gh >/dev/null && gh auth status &>/dev/null; then
-        GHREPO_DIR=$(mktemp -d)
-        git clone --quiet https://github.com/ronoray/homebox-scripts "$GHREPO_DIR" 2>/dev/null && \
-        cp /home/rono/scripts/backup-homebox.sh  "$GHREPO_DIR/" && \
-        cp /home/rono/scripts/restore-homebox.sh "$GHREPO_DIR/" && \
-        cd "$GHREPO_DIR" && \
-        git config user.email "ronoray@users.noreply.github.com" && \
-        git config user.name "ronoray" && \
-        git diff --quiet || (git add -A && git commit -m "Auto-update from backup run ${STAMP}" && git push --quiet) && \
-        cd /home/rono && rm -rf "$GHREPO_DIR" && \
-        log "Scripts pushed to github.com/ronoray/homebox-scripts" || \
-        { warn "GitHub push failed (non-fatal)"; rm -rf "$GHREPO_DIR"; cd /home/rono; }
+        GH_TOKEN=$(gh auth token 2>/dev/null) || true
+        if [[ -n "$GH_TOKEN" ]]; then
+            GHREPO_DIR=$(mktemp -d)
+            git clone --quiet "https://x-access-token:${GH_TOKEN}@github.com/ronoray/homebox-scripts" "$GHREPO_DIR" 2>/dev/null && \
+            cp /home/rono/scripts/backup-homebox.sh  "$GHREPO_DIR/" && \
+            cp /home/rono/scripts/restore-homebox.sh "$GHREPO_DIR/" && \
+            cd "$GHREPO_DIR" && \
+            git config user.email "ronoray@users.noreply.github.com" && \
+            git config user.name "ronoray" && \
+            (git diff --quiet && git diff --cached --quiet) || \
+                (git add -A && git commit -m "Auto-update from backup run ${STAMP}" && git push --quiet) && \
+            cd /home/rono && rm -rf "$GHREPO_DIR" && \
+            log "Scripts pushed to github.com/ronoray/homebox-scripts" || \
+            { warn "GitHub push failed (non-fatal)"; rm -rf "$GHREPO_DIR" 2>/dev/null; cd /home/rono; }
+        fi
     fi
 fi
 
