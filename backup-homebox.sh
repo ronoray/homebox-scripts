@@ -174,6 +174,21 @@ else
     rclone copy "$(realpath "$0")" "${REMOTE}/" 2>/dev/null || \
         rclone copy /home/rono/scripts/restore-homebox.sh "${REMOTE}/"
     log "Restore script updated at ${REMOTE}/restore-homebox.sh"
+
+    # Push latest scripts to GitHub (ronoray/homebox-scripts) for curl bootstrap
+    if command -v gh >/dev/null && gh auth status &>/dev/null; then
+        GHREPO_DIR=$(mktemp -d)
+        git clone --quiet https://github.com/ronoray/homebox-scripts "$GHREPO_DIR" 2>/dev/null && \
+        cp /home/rono/scripts/backup-homebox.sh  "$GHREPO_DIR/" && \
+        cp /home/rono/scripts/restore-homebox.sh "$GHREPO_DIR/" && \
+        cd "$GHREPO_DIR" && \
+        git config user.email "ronoray@users.noreply.github.com" && \
+        git config user.name "ronoray" && \
+        git diff --quiet || (git add -A && git commit -m "Auto-update from backup run ${STAMP}" && git push --quiet) && \
+        cd /home/rono && rm -rf "$GHREPO_DIR" && \
+        log "Scripts pushed to github.com/ronoray/homebox-scripts" || \
+        { warn "GitHub push failed (non-fatal)"; rm -rf "$GHREPO_DIR"; cd /home/rono; }
+    fi
 fi
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
