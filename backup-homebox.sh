@@ -92,14 +92,27 @@ if [[ -d /home/rono/.claude ]]; then
     cp    /home/rono/.claude/history.jsonl     "${TMPDIR}/system/claude/" 2>/dev/null || true
     cp -a /home/rono/.claude/plans             "${TMPDIR}/system/claude/" 2>/dev/null || true
     cp -a /home/rono/.claude/todos             "${TMPDIR}/system/claude/" 2>/dev/null || true
+    # Telegram channel config (bot token, access list, approved users)
+    cp -a /home/rono/.claude/channels          "${TMPDIR}/system/claude/" 2>/dev/null || true
+    # Telegram MCP server (source + lock file, skip node_modules)
+    if [[ -d /home/rono/.claude/telegram-channel ]]; then
+        mkdir -p "${TMPDIR}/system/claude/telegram-channel"
+        rsync -a --exclude='node_modules' --exclude='inbox' \
+            /home/rono/.claude/telegram-channel/ "${TMPDIR}/system/claude/telegram-channel/"
+    fi
 fi
 
 # ── 3. Systemd service files ──────────────────────────────────────────────────
 log "  systemd services..."
-for svc in wstunnel.service hms.service weechat.service cloudflared-mullvad-route.service docker-mullvad-bypass.service cloudflared-bypass.service; do
+for svc in wstunnel.service hms.service weechat.service cloudflared-mullvad-route.service docker-mullvad-bypass.service cloudflared-bypass.service clear-stale-gvfs.service post-fsck-reset.service; do
     f="/etc/systemd/system/${svc}"
     [[ -f "$f" ]] && cp "$f" "${TMPDIR}/systemd/" || true
 done
+# Docker drop-ins
+mkdir -p "${TMPDIR}/systemd/docker.service.d"
+cp /etc/systemd/system/docker.service.d/*.conf "${TMPDIR}/systemd/docker.service.d/" 2>/dev/null || true
+# clear-stale-gvfs helper script
+[[ -f /usr/local/sbin/clear-stale-gvfs.sh ]] && cp /usr/local/sbin/clear-stale-gvfs.sh "${TMPDIR}/systemd/" || true
 
 # ── 4. App configs from /mnt/storage/docker ──────────────────────────────────
 log "  app configs..."

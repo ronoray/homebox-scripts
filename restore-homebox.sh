@@ -131,12 +131,19 @@ if [[ -d "${EXTRACT}/system/weechat" ]]; then
     log "  weechat config restored."
 fi
 
-# Claude memory (projects, settings, history, plans, todos)
+# Claude memory (projects, settings, history, plans, todos, Telegram channel)
 if [[ -d "${EXTRACT}/system/claude" ]]; then
     mkdir -p "$TARGET_HOME/.claude"
     cp -a "${EXTRACT}/system/claude/." "$TARGET_HOME/.claude/"
+    # Re-install Telegram MCP node_modules after restore
+    if [[ -d "$TARGET_HOME/.claude/telegram-channel" ]]; then
+        log "  Installing Telegram MCP dependencies..."
+        cd "$TARGET_HOME/.claude/telegram-channel"
+        npm install --silent 2>/dev/null || true
+        cd /
+    fi
     chown -R "${TARGET_USER}:${TARGET_USER}" "$TARGET_HOME/.claude"
-    log "  Claude memory/settings restored."
+    log "  Claude memory/settings + Telegram channel restored."
 fi
 
 # ── Step 3: Restore scripts (wstunnel binary etc.) ────────────────────────────
