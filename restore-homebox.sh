@@ -163,11 +163,25 @@ if [[ -d "${EXTRACT}/systemd" ]]; then
         $SUDO cp "$svc" "/etc/systemd/system/${name}"
         log "  Installed: ${name}"
     done
+    # Restore service drop-in directories (docker.service.d/, wg-quick@wg0.service.d/, etc.)
+    for dropdir in "${EXTRACT}/systemd/"*.service.d; do
+        [[ -d "$dropdir" ]] || continue
+        name=$(basename "$dropdir")
+        $SUDO mkdir -p "/etc/systemd/system/${name}"
+        $SUDO cp "$dropdir"/*.conf "/etc/systemd/system/${name}/" 2>/dev/null || true
+        log "  Installed drop-ins: ${name}"
+    done
+    # Restore helper scripts stored alongside service files
+    if [[ -f "${EXTRACT}/systemd/clear-stale-gvfs.sh" ]]; then
+        $SUDO cp "${EXTRACT}/systemd/clear-stale-gvfs.sh" /usr/local/sbin/clear-stale-gvfs.sh
+        $SUDO chmod 755 /usr/local/sbin/clear-stale-gvfs.sh
+        log "  Installed: /usr/local/sbin/clear-stale-gvfs.sh"
+    fi
     # Symlink wstunnel.service from scripts dir if it exists there
     [[ -f "$TARGET_HOME/scripts/wstunnel.service" ]] && \
         $SUDO ln -sf "$TARGET_HOME/scripts/wstunnel.service" /etc/systemd/system/wstunnel.service 2>/dev/null || true
     $SUDO systemctl daemon-reload
-    $SUDO systemctl enable wstunnel.service cloudflared-mullvad-route.service 2>/dev/null || true
+    $SUDO systemctl enable wstunnel.service cloudflared-mullvad-route.service clear-stale-gvfs.service 2>/dev/null || true
     log "  Services enabled."
 fi
 

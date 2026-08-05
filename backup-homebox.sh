@@ -10,11 +10,26 @@ REMOTE="gdrive:homebox-backups"
 STAMP=$(date +%Y-%m-%d_%H%M)
 TMPDIR=$(mktemp -d)
 ARCHIVE="/tmp/homebox-backup-${STAMP}.tar.gz"
-KEEP_BACKUPS=7
+KEEP_BACKUPS=2
+
+TELEGRAM_BOT="8195033515:AAGEPfHuzOlZX9oQcYMfeY7LS1i10NOd5g4"
+TELEGRAM_CHAT="126692952"
 
 log()  { echo "[$(date +%H:%M:%S)] $*"; }
 die()  { echo "ERROR: $*" >&2; rm -rf "$TMPDIR"; exit 1; }
 warn() { echo "WARN:  $*" >&2; }
+
+_on_exit() {
+    local rc=$?
+    rm -rf "${TMPDIR:-}" "${ARCHIVE:-}"
+    if [[ $rc -ne 0 ]] && [[ "${DRYRUN:-0}" -eq 0 ]]; then
+        curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT}" \
+            -d text="❌ Homebox backup FAILED (exit ${rc}) at $(date '+%Y-%m-%d %H:%M')" \
+            > /dev/null 2>&1 || true
+    fi
+}
+trap _on_exit EXIT
 
 [[ "${1:-}" == "--dry-run" ]] && DRYRUN=1 || DRYRUN=0
 
@@ -53,13 +68,29 @@ fi
 if [[ -d /home/rono/.ssh ]]; then
     mkdir -p "${TMPDIR}/system/ssh"
     cp /home/rono/.ssh/authorized_keys "${TMPDIR}/system/ssh/" 2>/dev/null || true
-    cp /home/rono/.ssh/id_ed25519       "${TMPDIR}/system/ssh/" 2>/dev/null || true
-    cp /home/rono/.ssh/id_ed25519.pub   "${TMPDIR}/system/ssh/" 2>/dev/null || true
+    cp /home/rono/.ssh/id_ed25519              "${TMPDIR}/system/ssh/" 2>/dev/null || true
+    cp /home/rono/.ssh/id_ed25519.pub          "${TMPDIR}/system/ssh/" 2>/dev/null || true
+    cp /home/rono/.ssh/id_ed25519_claude       "${TMPDIR}/system/ssh/" 2>/dev/null || true
+    cp /home/rono/.ssh/id_ed25519_claude.pub   "${TMPDIR}/system/ssh/" 2>/dev/null || true
     cp /home/rono/.ssh/config           "${TMPDIR}/system/ssh/" 2>/dev/null || true
 fi
 
 # sudoers drop-in
 [[ -f /etc/sudoers.d/claude-code ]] && sudo cp /etc/sudoers.d/claude-code "${TMPDIR}/system/" 2>/dev/null || true
+
+
+# Crontab
+crontab -l > "${TMPDIR}/system/crontab.txt" 2>/dev/null || true
+
+# Desktop app launchers
+cp -a /home/rono/.local/share/applications "${TMPDIR}/system/local-applications" 2>/dev/null || true
+
+# Wallpaper
+cp /home/rono/Pictures/homebox-wallpaper.png "${TMPDIR}/system/" 2>/dev/null || true
+
+# WireGuard config (not world-readable; needs sudo)
+mkdir -p "${TMPDIR}/system/wireguard"
+sudo cp /etc/wireguard/wg0.conf "${TMPDIR}/system/wireguard/wg0.conf" 2>/dev/null || true
 
 # ── 2. /home/rono/scripts (wstunnel binary + all service/script files) ─────────
 log "  scripts dir..."
@@ -111,6 +142,9 @@ done
 # Docker drop-ins
 mkdir -p "${TMPDIR}/systemd/docker.service.d"
 cp /etc/systemd/system/docker.service.d/*.conf "${TMPDIR}/systemd/docker.service.d/" 2>/dev/null || true
+# wg-quick@wg0 drop-ins (startup ordering)
+mkdir -p "${TMPDIR}/systemd/wg-quick@wg0.service.d"
+cp /etc/systemd/system/wg-quick@wg0.service.d/*.conf "${TMPDIR}/systemd/wg-quick@wg0.service.d/" 2>/dev/null || true
 # clear-stale-gvfs helper script
 [[ -f /usr/local/sbin/clear-stale-gvfs.sh ]] && cp /usr/local/sbin/clear-stale-gvfs.sh "${TMPDIR}/systemd/" || true
 
@@ -158,6 +192,8 @@ find "${TMPDIR}" -type f | sort > "${TMPDIR}/manifest.txt"
 FILE_COUNT=$(wc -l < "${TMPDIR}/manifest.txt")
 log "  ${FILE_COUNT} files to archive"
 
+# Ensure all staged files are readable before archiving
+sudo chown -R "rono:rono" "$TMPDIR" 2>/dev/null || true
 tar -czf "$ARCHIVE" -C "$TMPDIR" .
 SIZE=$(du -sh "$ARCHIVE" | cut -f1)
 log "  Archive: $ARCHIVE ($SIZE)"
@@ -188,26 +224,29 @@ else
         rclone copy /home/rono/scripts/restore-homebox.sh "${REMOTE}/"
     log "Restore script updated at ${REMOTE}/restore-homebox.sh"
 
-    # Push latest scripts to GitHub (ronoray/homebox-scripts) for curl bootstrap
+    # Push latest scripts to GitHub (ronoray/homebox-scripts) for curl bootstrap.
+    # Auth via git's gh credential helper — NOT `gh auth token` (this gh 2.4.0 lacks that
+    # subcommand, which silently broke this push for a month; fixed 2026-08-05).
     if command -v gh >/dev/null && gh auth status &>/dev/null; then
-        GH_TOKEN=$(gh auth token 2>/dev/null) || true
-        if [[ -n "$GH_TOKEN" ]]; then
-            GHREPO_DIR=$(mktemp -d)
-            git clone --quiet "https://x-access-token:${GH_TOKEN}@github.com/ronoray/homebox-scripts" "$GHREPO_DIR" 2>/dev/null && \
-            cp /home/rono/scripts/backup-homebox.sh  "$GHREPO_DIR/" && \
-            cp /home/rono/scripts/restore-homebox.sh "$GHREPO_DIR/" && \
-            cd "$GHREPO_DIR" && \
-            git config user.email "ronoray@users.noreply.github.com" && \
-            git config user.name "ronoray" && \
-            (git diff --quiet && git diff --cached --quiet) || \
-                (git add -A && git commit -m "Auto-update from backup run ${STAMP}" && git push --quiet) && \
-            cd /home/rono && rm -rf "$GHREPO_DIR" && \
-            log "Scripts pushed to github.com/ronoray/homebox-scripts" || \
-            { warn "GitHub push failed (non-fatal)"; rm -rf "$GHREPO_DIR" 2>/dev/null; cd /home/rono; }
-        fi
+        GHREPO_DIR=$(mktemp -d)
+        git clone --quiet "https://github.com/ronoray/homebox-scripts" "$GHREPO_DIR" 2>/dev/null && \
+        cp /home/rono/scripts/backup-homebox.sh  "$GHREPO_DIR/" && \
+        cp /home/rono/scripts/restore-homebox.sh "$GHREPO_DIR/" && \
+        cd "$GHREPO_DIR" && \
+        git config user.email "ronoray@users.noreply.github.com" && \
+        git config user.name "ronoray" && \
+        (git diff --quiet && git diff --cached --quiet) || \
+            (git add -A && git commit -m "Auto-update from backup run ${STAMP}" && git push --quiet) && \
+        cd /home/rono && rm -rf "$GHREPO_DIR" && \
+        log "Scripts pushed to github.com/ronoray/homebox-scripts" || \
+        { warn "GitHub push failed (non-fatal)"; rm -rf "$GHREPO_DIR" 2>/dev/null; cd /home/rono; }
     fi
 fi
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 rm -rf "$TMPDIR" "$ARCHIVE"
 log "Done."
+curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT}/sendMessage" \
+    -d chat_id="${TELEGRAM_CHAT}" \
+    -d text="✅ Homebox backup OK at $(date '+%Y-%m-%d %H:%M') (${SIZE})" \
+    > /dev/null 2>&1 || true
