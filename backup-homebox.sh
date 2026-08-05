@@ -243,6 +243,20 @@ else
     fi
 fi
 
+# ── Push homebox-config off-site ──────────────────────────────────────────────
+# Commits to /home/rono are made ad-hoc (by sessions), and pushes were silently not
+# happening — the repo drifted 18 commits behind GitHub (origin stuck Jul 3) until Aug 5 2026.
+# PUSH-ONLY: never auto `git add -A` here (this repo leaked secrets once, Jul 3) — we only
+# push commits that already exist, via the working gh credential helper.
+if [[ -d /home/rono/.git ]]; then
+    if [[ -n "$(git -C /home/rono log --oneline '@{u}..' 2>/dev/null)" ]]; then
+        git -C /home/rono push -q 2>/dev/null && log "Config repo pushed to homebox-config" \
+            || warn "config repo push failed (non-fatal)"
+    else
+        log "Config repo already up to date on GitHub"
+    fi
+fi
+
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 rm -rf "$TMPDIR" "$ARCHIVE"
 log "Done."
